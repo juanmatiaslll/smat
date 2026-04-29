@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from . import models, schemas, crud
@@ -8,7 +8,6 @@ from .auth import crear_token_acceso, obtener_identidad_actual
 # Crea las tablas al iniciar
 models.Base.metadata.create_all(bind=engine)
 
-# --- METADATOS EXACTOS DE LA GUÍA (Lab 4.2) ---
 app = FastAPI(
     title="SMAT - Sistema de Monitoreo de Alerta Temprana",
     description="""
@@ -25,7 +24,7 @@ Permite la telemetría de sensores en tiempo real y el cálculo de niveles de ri
     contact={
         "name": "Soporte Técnico SMAT - FISI",
         "url": "http://fisi.unmsm.edu.pe",
-        "email": "juan.matiasl@unmsm.edu.pe", # Tu correo para que sepa que eres tú
+        "email": "juan.matiasl@unmsm.edu.pe",
     },
     license_info={
         "name": "Apache 2.0",
@@ -33,7 +32,6 @@ Permite la telemetría de sensores en tiempo real y el cálculo de niveles de ri
     },
 )
 
-# --- REQUISITO LAB 4.3: CONFIGURACIÓN DE CORS ---
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -42,24 +40,34 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ENDPOINT DE SEGURIDAD (LAB 4.4)
+# --- SEGURIDAD ---
 @app.post("/token", tags=["Seguridad"])
 async def login():
     return {"access_token": crear_token_acceso({"sub": "admin_smat"}), "token_type": "bearer"}
 
-# ENDPOINTS PROTEGIDOS CON JWT
+# --- GESTIÓN DE INFRAESTRUCTURA ---
+
+# NUEVO: Endpoint para listar estaciones (Resuelve el Error 405 en Flutter)
+@app.get("/estaciones/", tags=["Gestión de Infraestructura"], summary="Listar todas las estaciones")
+def listar_estaciones(db: Session = Depends(get_db)):
+    """
+    Retorna la lista completa de estaciones registradas en el sistema.
+    """
+    return db.query(models.EstacionDB).all()
+
 @app.post("/estaciones/", status_code=201, tags=["Gestión de Infraestructura"])
 def crear_estacion(estacion: schemas.EstacionCreate, db: Session = Depends(get_db), token: str = Depends(obtener_identidad_actual)):
     return crud.crear_estacion(db=db, estacion=estacion)
 
+# --- TELEMETRÍA ---
 @app.post("/lecturas/", status_code=201, tags=["Telemetría de Sensores"])
 def registrar_lectura(lectura: schemas.LecturaCreate, db: Session = Depends(get_db), token: str = Depends(obtener_identidad_actual)):
-    # RETO DE INTEGRIDAD 4.4: Verificar si existe la estación
     estacion_db = db.query(models.EstacionDB).filter(models.EstacionDB.id == lectura.estacion_id).first()
     if not estacion_db:
         raise HTTPException(status_code=404, detail="Error de Integridad: La estación no existe.")
     return crud.crear_lectura(db=db, lectura=lectura)
 
+# --- REPORTES Y AUDITORÍA ---
 @app.get("/estaciones/stats", response_model=schemas.StatsResumen, tags=["Auditoría"])
 def obtener_estadisticas(db: Session = Depends(get_db)):
     return crud.obtener_estadisticas_globales(db)
